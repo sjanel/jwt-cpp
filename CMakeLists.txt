@@ -62,6 +62,16 @@ if(JWT_EXTERNAL_PICOJSON)
   find_package(picojson 1.3.0 REQUIRED)
 endif()
 
+include(FetchContent)
+
+FetchContent_Declare(
+  json
+  GIT_REPOSITORY https://github.com/ArthurSonzogni/nlohmann_json_cmake_fetchcontent.git
+  GIT_TAG v3.9.1
+)
+
+FetchContent_MakeAvailable(json)
+
 set(JWT_INCLUDE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/include)
 set(JWT_HEADER_FILES ${JWT_INCLUDE_PATH}/jwt-cpp/jwt.h)
 foreach(traits ${JWT_JSON_TRAITS_OPTIONS})
@@ -107,7 +117,7 @@ if(JWT_EXTERNAL_PICOJSON)
   target_link_libraries(jwt-cpp INTERFACE picojson::picojson>)
 endif()
 
-# Hunter needs relative paths so the files are palced correctly
+# Hunter needs relative paths so the files are placed correctly
 if(NOT JWT_CMAKE_FILES_INSTALL_DIR)
   set(JWT_CMAKE_FILES_INSTALL_DIR cmake)
 endif()

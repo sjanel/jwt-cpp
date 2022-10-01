@@ -31,3 +31,4 @@ target_link_libraries(es256k jwt-cpp::jwt-cpp)
 
 add_executable(partial-claim-verifier partial-claim-verifier.cpp)
 target_link_libraries(partial-claim-verifier jwt-cpp::jwt-cpp)
+target_link_libraries(partial-claim-verifier nlohmann_json::nlohmann_json)

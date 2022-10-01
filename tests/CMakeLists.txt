@@ -53,6 +53,7 @@ else()
   endif()
 endif()
 target_link_libraries(jwt-cpp-test PRIVATE jwt-cpp $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:${CMAKE_DL_LIBS}>)
+target_link_libraries(jwt-cpp-test PRIVATE nlohmann_json::nlohmann_json)
 
 gtest_add_tests(TARGET jwt-cpp-test)
 
