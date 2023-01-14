@@ -6,7 +6,8 @@
 #include <cstdint>
 #include <stdexcept>
 #include <string>
-#include <vector>
+
+#include "string_types.h"
 
 #ifdef __has_cpp_attribute
 #if __has_cpp_attribute(fallthrough)
@@ -38,10 +39,7 @@ namespace jwt {
 					 'w', 'x', 'y', 'z', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '+', '/'}};
 				return data;
 			}
-			static const std::string& fill() {
-				static std::string fill{"="};
-				return fill;
-			}
+			static std::array<string_constant, 1> fill() { return std::array<string_constant, 1>{"="}; }
 		};
 		/**
 		 * \brief valid list of character when working with [Base64URL](https://tools.ietf.org/html/rfc4648#section-5)
@@ -61,10 +59,7 @@ namespace jwt {
 					 'w', 'x', 'y', 'z', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '-', '_'}};
 				return data;
 			}
-			static const std::string& fill() {
-				static std::string fill{"%3d"};
-				return fill;
-			}
+			static std::array<string_constant, 1> fill() { return std::array<string_constant, 1>{"%3d"}; }
 		};
 		namespace helper {
 			/**
@@ -82,15 +77,15 @@ namespace jwt {
 						 'w', 'x', 'y', 'z', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '-', '_'}};
 					return data;
 				}
-				static const std::initializer_list<std::string>& fill() {
-					static std::initializer_list<std::string> fill{"%3D", "%3d"};
-					return fill;
-				}
+				static std::array<string_constant, 2> fill() { return std::array<string_constant, 2>{"%3D", "%3d"}; }
 			};
 		} // namespace helper
 
 		inline uint32_t index(const std::array<char, 64>& alphabet, char symbol) {
-			auto itr = std::find_if(alphabet.cbegin(), alphabet.cend(), [symbol](char c) { return c == symbol; });
+			if (symbol >= 'A' && symbol <= 'Z') { return static_cast<uint32_t>(symbol - 'A'); }
+			if (symbol >= 'a' && symbol <= 'z') { return static_cast<uint32_t>(26 + symbol - 'a'); }
+			if (symbol >= '0' && symbol <= '9') { return static_cast<uint32_t>(52 + symbol - '0'); }
+			auto itr = std::find(std::next(alphabet.cbegin(), 62U), alphabet.cend(), symbol);
 			if (itr == alphabet.cend()) { throw std::runtime_error("Invalid input: not within alphabet"); }
 
 			return std::distance(alphabet.cbegin(), itr);
@@ -117,30 +112,31 @@ namespace jwt {
 				}
 			};
 
-			inline padding count_padding(const std::string& base, const std::vector<std::string>& fills) {
-				for (const auto& fill : fills) {
-					if (base.size() < fill.size()) continue;
+			template<class StrInputIt>
+			padding count_padding(string_view base, StrInputIt fillStart, StrInputIt fillEnd) {
+				for (StrInputIt fillIt = fillStart; fillIt != fillEnd; ++fillIt) {
+					int fillLen = static_cast<int>(fillIt->size());
+					int deltaLen = static_cast<int>(base.size()) - fillLen;
 					// Does the end of the input exactly match the fill pattern?
-					if (base.substr(base.size() - fill.size()) == fill) {
-						return padding{1, fill.length()} +
-							   count_padding(base.substr(0, base.size() - fill.size()), fills);
+					if (deltaLen >= 0 && base.substr(deltaLen) == *fillIt) {
+						return padding{1, static_cast<size_t>(fillLen)} +
+							   count_padding(base.substr(0, deltaLen), fillStart, fillEnd);
 					}
 				}
 
 				return {};
 			}
 
-			inline std::string encode(const std::string& bin, const std::array<char, 64>& alphabet,
-									  const std::string& fill) {
+			inline std::string encode(string_view bin, const std::array<char, 64>& alphabet, string_view fill) {
 				size_t size = bin.size();
 				std::string res;
 
 				// clear incomplete bytes
 				size_t fast_size = size - size % 3;
-				for (size_t i = 0; i < fast_size;) {
-					uint32_t octet_a = static_cast<unsigned char>(bin[i++]);
-					uint32_t octet_b = static_cast<unsigned char>(bin[i++]);
-					uint32_t octet_c = static_cast<unsigned char>(bin[i++]);
+				for (size_t i = 0; i < fast_size; i += 3) {
+					uint32_t octet_a = static_cast<unsigned char>(bin[i]);
+					uint32_t octet_b = static_cast<unsigned char>(bin[i + 1]);
+					uint32_t octet_c = static_cast<unsigned char>(bin[i + 2]);
 
 					uint32_t triple = (octet_a << 0x10) + (octet_b << 0x08) + octet_c;
 
@@ -179,9 +175,10 @@ namespace jwt {
 				return res;
 			}
 
-			inline std::string decode(const std::string& base, const std::array<char, 64>& alphabet,
-									  const std::vector<std::string>& fill) {
-				const auto pad = count_padding(base, fill);
+			template<class StrInputIt>
+			inline std::string decode(string_view base, const std::array<char, 64>& alphabet, StrInputIt fillStart,
+									  StrInputIt fillEnd) {
+				const auto pad = count_padding(base, fillStart, fillEnd);
 				if (pad.count > 2) throw std::runtime_error("Invalid input: too much fill");
 
 				const size_t size = base.size() - pad.length;
@@ -225,44 +222,42 @@ namespace jwt {
 				return res;
 			}
 
-			inline std::string decode(const std::string& base, const std::array<char, 64>& alphabet,
-									  const std::string& fill) {
-				return decode(base, alphabet, std::vector<std::string>{fill});
-			}
-
-			inline std::string pad(const std::string& base, const std::string& fill) {
-				std::string padding;
-				switch (base.size() % 4) {
-				case 1: padding += fill; JWT_FALLTHROUGH;
-				case 2: padding += fill; JWT_FALLTHROUGH;
-				case 3: padding += fill; JWT_FALLTHROUGH;
+			inline std::string pad(string_view base, string_view fill) {
+				std::string res(base);
+				switch (res.size() % 4) {
+				case 1: res += fill; JWT_FALLTHROUGH;
+				case 2: res += fill; JWT_FALLTHROUGH;
+				case 3: res += fill; JWT_FALLTHROUGH;
 				default: break;
 				}
-
-				return base + padding;
+				return res;
 			}
 
-			inline std::string trim(const std::string& base, const std::string& fill) {
+			inline std::string trim(string_view base, string_view fill) {
 				auto pos = base.find(fill);
-				return base.substr(0, pos);
+				return static_cast<std::string>(base.substr(0, pos));
 			}
 		} // namespace details
 
 		template<typename T>
-		std::string encode(const std::string& bin) {
-			return details::encode(bin, T::data(), T::fill());
+		std::string encode(string_view bin) {
+			static const auto fills = T::fill();
+			return details::encode(bin, T::data(), fills.front());
 		}
 		template<typename T>
-		std::string decode(const std::string& base) {
-			return details::decode(base, T::data(), T::fill());
+		std::string decode(string_view base) {
+			static const auto fills = T::fill();
+			return details::decode(base, T::data(), fills.begin(), fills.end());
 		}
 		template<typename T>
-		std::string pad(const std::string& base) {
-			return details::pad(base, T::fill());
+		std::string pad(string_view base) {
+			static const auto fills = T::fill();
+			return details::pad(base, fills.front());
 		}
 		template<typename T>
-		std::string trim(const std::string& base) {
-			return details::trim(base, T::fill());
+		std::string trim(string_view base) {
+			static const auto fills = T::fill();
+			return details::trim(base, fills.front());
 		}
 	} // namespace base
 } // namespace jwt
