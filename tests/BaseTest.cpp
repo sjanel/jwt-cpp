@@ -4,6 +4,8 @@
 namespace jwt {
 
 	namespace {
+		/// Helper function wrapper of count_padding for convenience. std::initializer_list makes copies of underlying objects
+		/// so it's better to avoid its usage when unnecessary.
 		base::details::padding count_padding(string_view base, std::initializer_list<std::string> fills) {
 			return base::details::count_padding(base, fills.begin(), fills.end());
 		}

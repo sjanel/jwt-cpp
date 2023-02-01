@@ -28,7 +28,7 @@ jwt-cpp supports all the algorithms defined by the specifications. The modular d
 For completeness, here is a list of all supported algorithms:
 
 | HMSC  | RSA   | ECDSA  | PSS   | EdDSA   |
-|-------|-------|--------|-------|---------|
+| ----- | ----- | ------ | ----- | ------- |
 | HS256 | RS256 | ES256  | PS256 | Ed25519 |
 | HS384 | RS384 | ES384  | PS384 | Ed448   |
 | HS512 | RS512 | ES512  | PS512 |         |
@@ -39,7 +39,7 @@ For completeness, here is a list of all supported algorithms:
 In the name of flexibility and extensibility, jwt-cpp supports [OpenSSL](https://github.com/openssl/openssl), [LibreSSL](https://github.com/libressl-portable/portable), and [wolfSSL](https://github.com/wolfSSL/wolfssl). Read [this page](docs/ssl.md) for more details. These are the version which are currently being tested:
 
 | OpenSSL           | LibreSSL       | wolfSSL        |
-|-------------------|----------------|----------------|
+| ----------------- | -------------- | -------------- |
 | ![1.0.2u][o1.0.2] | ![3.3.6][l3.3] | ![5.1.1][w5.1] |
 | ![1.1.0i][o1.1.0] | ![3.4.3][l3.4] | ![5.2.0][w5.2] |
 | ![1.1.1q][o1.1.1] | ![3.5.3][l3.5] | ![5.3.0][w5.3] |
@@ -96,7 +96,7 @@ int main() {
     std::string token = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXUyJ9.eyJpc3MiOiJhdXRoMCJ9.AbIJTDMFc7yUa5MhvcP03nJPyCPzZtQcGEp-zWfOkEE";
     auto decoded = jwt::decode(token);
 
-    for(auto& e : decoded.get_payload_json())
+    for(const auto& e : decoded.get_payload_json())
         std::cout << e.first << " = " << e.second << std::endl;
 }
 ```

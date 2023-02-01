@@ -2064,6 +2064,12 @@ namespace jwt {
 										  is_valid_json_integer<value_type, integer_type>::value &&
 										  is_valid_json_boolean<value_type, boolean_type>::value;
 		};
+
+		// emulation of C++20 std::remove_cvref
+		template<class T>
+		struct remove_cvref {
+			using type = typename std::remove_cv<typename std::remove_reference<T>::type>::type;
+		};
 	} // namespace details
 
 	/**
@@ -2235,10 +2241,14 @@ namespace jwt {
 	namespace details {
 		template<typename json_traits>
 		struct map_of_claims {
-			typename json_traits::object_type claims;
+			using object_type = typename json_traits::object_type;
 			using basic_claim_t = basic_claim<json_traits>;
 			using iterator = typename json_traits::object_type::iterator;
 			using const_iterator = typename json_traits::object_type::const_iterator;
+			template<typename T>
+			using detect_transparent = typename T::is_transparent;
+			template<typename T>
+			using detect_key_compare = typename T::key_compare;
 
 			map_of_claims() = default;
 
@@ -2272,8 +2282,19 @@ namespace jwt {
 			 * Check if a claim is present in the map
 			 * \return true if claim was present, false otherwise
 			 */
-			template<class string_type>
-			bool has_claim(const string_type& name) const noexcept {
+			bool has_claim(const typename json_traits::string_type& name) const { return claims.count(name) != 0; }
+
+			/**
+			 * Check if a claim is present in the map
+			 * \return true if claim was present, false otherwise
+			 */
+			template<
+				class string_type,
+				typename std::enable_if<!std::is_same<string_type, typename json_traits::string_type>::value &&
+											is_detected<detect_key_compare, typename object_type::key_compare>::value &&
+											is_detected<detect_transparent, typename object_type::key_compare>::value,
+										bool>::type = true>
+			bool has_claim(const string_type& name) const {
 				return claims.count(name) != 0;
 			}
 
@@ -2284,11 +2305,31 @@ namespace jwt {
 			 * \return Requested claim
 			 * \throw jwt::error::claim_not_present_exception if the claim was not present
 			 */
-			template<class string_type>
-			basic_claim_t get_claim(const string_type& name) const {
-				if (!has_claim(name)) throw error::claim_not_present_exception();
-				return basic_claim_t{claims.at(name)};
+			basic_claim_t get_claim(const typename json_traits::string_type& name) const {
+				auto claimIt = claims.find(name);
+				if (claimIt == claims.end()) { throw error::claim_not_present_exception(); }
+				return basic_claim_t{claimIt->second};
 			}
+
+			/**
+			 * Get a claim by name
+			 *
+			 * \param name the name of the desired claim
+			 * \return Requested claim
+			 * \throw jwt::error::claim_not_present_exception if the claim was not present
+			 */
+			template<
+				class string_type,
+				typename std::enable_if<!std::is_same<string_type, typename json_traits::string_type>::value &&
+											is_detected<detect_transparent, typename object_type::key_compare>::value,
+										bool>::type = true>
+			basic_claim_t get_claim(const string_type& name) const {
+				auto claimIt = claims.find(name);
+				if (claimIt == claims.end()) { throw error::claim_not_present_exception(); }
+				return basic_claim_t{claimIt->second};
+			}
+
+			object_type claims;
 		};
 	} // namespace details
 
@@ -2519,8 +2560,8 @@ namespace jwt {
 		 * \throw std::invalid_argument Token is not in correct format
 		 * \throw std::runtime_error Base64 decoding failed or invalid json
 		 */
-		JWT_CLAIM_EXPLICIT decoded_jwt(const typename json_traits::string_type& token)
-			: decoded_jwt(token, [](const typename json_traits::string_type& str) {
+		JWT_CLAIM_EXPLICIT decoded_jwt(string_view token)
+			: decoded_jwt(token, [](string_view str) {
 				  return base::decode<alphabet::base64url>(base::pad<alphabet::base64url>(str));
 			  }) {}
 #endif
@@ -2536,11 +2577,13 @@ namespace jwt {
 		 * \throw std::runtime_error Base64 decoding failed or invalid json
 		 */
 		template<typename Decode>
-		decoded_jwt(const typename json_traits::string_type& token, Decode decode) : token(token) {
+		decoded_jwt(string_view token, Decode decode) : token(token) {
 			auto hdr_end = token.find('.');
-			if (hdr_end == json_traits::string_type::npos) throw std::invalid_argument("invalid token supplied");
+			using string_type = typename details::remove_cvref<string_view>::type;
+			static constexpr auto npos = string_type::npos;
+			if (hdr_end == npos) throw std::invalid_argument("invalid token supplied");
 			auto payload_end = token.find('.', hdr_end + 1);
-			if (payload_end == json_traits::string_type::npos) throw std::invalid_argument("invalid token supplied");
+			if (payload_end == npos) throw std::invalid_argument("invalid token supplied");
 			header_base64 = token.substr(0, hdr_end);
 			payload_base64 = token.substr(hdr_end + 1, payload_end - hdr_end - 1);
 			signature_base64 = token.substr(payload_end + 1);
@@ -2557,47 +2600,47 @@ namespace jwt {
 		 * Get token string, as passed to constructor
 		 * \return token as passed to constructor
 		 */
-		const typename json_traits::string_type& get_token() const noexcept { return token; }
+		string_view get_token() const noexcept { return token; }
 		/**
 		 * Get header part as json string
 		 * \return header part after base64 decoding
 		 */
-		const typename json_traits::string_type& get_header() const noexcept { return header; }
+		string_view get_header() const noexcept { return header; }
 		/**
 		 * Get payload part as json string
 		 * \return payload part after base64 decoding
 		 */
-		const typename json_traits::string_type& get_payload() const noexcept { return payload; }
+		string_view get_payload() const noexcept { return payload; }
 		/**
 		 * Get signature part as json string
 		 * \return signature part after base64 decoding
 		 */
-		const typename json_traits::string_type& get_signature() const noexcept { return signature; }
+		string_view get_signature() const noexcept { return signature; }
 		/**
 		 * Get header part as base64 string
 		 * \return header part before base64 decoding
 		 */
-		const typename json_traits::string_type& get_header_base64() const noexcept { return header_base64; }
+		string_view get_header_base64() const noexcept { return header_base64; }
 		/**
 		 * Get payload part as base64 string
 		 * \return payload part before base64 decoding
 		 */
-		const typename json_traits::string_type& get_payload_base64() const noexcept { return payload_base64; }
+		string_view get_payload_base64() const noexcept { return payload_base64; }
 		/**
 		 * Get signature part as base64 string
 		 * \return signature part before base64 decoding
 		 */
-		const typename json_traits::string_type& get_signature_base64() const noexcept { return signature_base64; }
+		string_view get_signature_base64() const noexcept { return signature_base64; }
 		/**
 		 * Get all payload as JSON object
 		 * \return map of claims
 		 */
-		typename json_traits::object_type get_payload_json() const { return this->payload_claims.claims; }
+		const typename json_traits::object_type& get_payload_json() const { return this->payload_claims.claims; }
 		/**
 		 * Get all header as JSON object
 		 * \return map of claims
 		 */
-		typename json_traits::object_type get_header_json() const { return this->header_claims.claims; }
+		const typename json_traits::object_type& get_header_json() const { return this->header_claims.claims; }
 		/**
 		 * Get a payload claim by name
 		 *
@@ -2605,9 +2648,7 @@ namespace jwt {
 		 * \return Requested claim
 		 * \throw jwt::error::claim_not_present_exception if the claim was not present
 		 */
-		basic_claim_t get_payload_claim(const typename json_traits::string_type& name) const {
-			return this->payload_claims.get_claim(name);
-		}
+		basic_claim_t get_payload_claim(string_view name) const { return this->payload_claims.get_claim(name); }
 		/**
 		 * Get a header claim by name
 		 *
@@ -2615,9 +2656,7 @@ namespace jwt {
 		 * \return Requested claim
 		 * \throw jwt::error::claim_not_present_exception if the claim was not present
 		 */
-		basic_claim_t get_header_claim(const typename json_traits::string_type& name) const {
-			return this->header_claims.get_claim(name);
-		}
+		basic_claim_t get_header_claim(string_view name) const { return this->header_claims.get_claim(name); }
 	};
 
 	/**
@@ -2644,12 +2683,6 @@ namespace jwt {
 			return typename json_traits::value_type(typename json_traits::string_type(std::forward<string_type>(s)));
 		}
 
-		// emulation of C++20 std::remove_cvref
-		template<class T>
-		struct remove_cvref {
-			using type = typename std::remove_cv<typename std::remove_reference<T>::type>::type;
-		};
-
 	public:
 		builder() = default;
 
@@ -2659,12 +2692,13 @@ namespace jwt {
 		 * \param c Claim to add
 		 * \return *this to allow for method chaining
 		 */
-		template<class string_type, class value_type,
-				 typename std::enable_if<
-					 std::is_constructible<typename json_traits::string_type, string_type>::value &&
-						 std::is_constructible<typename json_traits::value_type, value_type>::value &&
-						 !std::is_same<basic_claim<json_traits>, typename remove_cvref<value_type>::type>::value,
-					 bool>::type = true>
+		template<
+			class string_type, class value_type,
+			typename std::enable_if<
+				std::is_constructible<typename json_traits::string_type, string_type>::value &&
+					std::is_constructible<typename json_traits::value_type, value_type>::value &&
+					!std::is_same<basic_claim<json_traits>, typename details::remove_cvref<value_type>::type>::value,
+				bool>::type = true>
 		builder& set_header_claim(string_type&& id, value_type&& c) {
 			header_claims[typename json_traits::string_type(std::forward<string_type>(id))] =
 				typename json_traits::value_type(std::forward<value_type>(c));
@@ -2719,12 +2753,13 @@ namespace jwt {
 		 * \param c Claim to add
 		 * \return *this to allow for method chaining
 		 */
-		template<class string_type, class value_type,
-				 typename std::enable_if<
-					 std::is_constructible<typename json_traits::string_type, string_type>::value &&
-						 std::is_constructible<typename json_traits::value_type, value_type>::value &&
-						 !std::is_same<basic_claim<json_traits>, typename remove_cvref<value_type>::type>::value,
-					 bool>::type = true>
+		template<
+			class string_type, class value_type,
+			typename std::enable_if<
+				std::is_constructible<typename json_traits::string_type, string_type>::value &&
+					std::is_constructible<typename json_traits::value_type, value_type>::value &&
+					!std::is_same<basic_claim<json_traits>, typename details::remove_cvref<value_type>::type>::value,
+				bool>::type = true>
 		builder& set_payload_claim(string_type&& id, value_type&& c) {
 			payload_claims[typename json_traits::string_type(std::forward<string_type>(id))] =
 				typename json_traits::value_type(std::forward<value_type>(c));
@@ -3032,7 +3067,6 @@ namespace jwt {
 		 */
 		template<typename json_traits, bool in_header = false>
 		struct equals_claim {
-			const basic_claim<json_traits> expected;
 			void operator()(const verify_context<json_traits>& ctx, std::error_code& ec) const {
 				auto jc = ctx.get_claim(in_header, expected.get_type(), ec);
 				if (ec) return;
@@ -3053,6 +3087,7 @@ namespace jwt {
 					return;
 				}
 			}
+			basic_claim<json_traits> expected;
 		};
 
 		/**
@@ -3281,6 +3316,22 @@ namespace jwt {
 		}
 
 		/**
+		 * Set an type to check for.
+		 *
+		 * According to [RFC 7519 Section 5.1](https://datatracker.ietf.org/doc/html/rfc7519#section-5.1),
+		 * This parameter is ignored by JWT implementations; any processing of this parameter is performed by the JWT application.
+		 * Check is casesensitive.
+		 *
+		 * \param type Type Header Parameter to check for.
+		 * \param locale Localization functionality to use when comapring
+		 * \return *this to allow chaining
+		 */
+		verifier& with_type(typename json_traits::string_type&& type, std::locale locale = std::locale{}) {
+			return with_claim(
+				"typ", verify_ops::insensitive_string_claim<json_traits, true>{std::move(type), std::move(locale)});
+		}
+
+		/**
 		 * Set an issuer to check for.
 		 * Check is casesensitive.
 		 * \param iss Issuer to check for.
@@ -3288,6 +3339,16 @@ namespace jwt {
 		 */
 		verifier& with_issuer(const typename json_traits::string_type& iss) {
 			return with_claim("iss", basic_claim_t(iss));
+		}
+
+		/**
+		 * Set an issuer to check for.
+		 * Check is casesensitive.
+		 * \param iss Issuer to check for.
+		 * \return *this to allow chaining
+		 */
+		verifier& with_issuer(typename json_traits::string_type&& iss) {
+			return with_claim("iss", basic_claim_t(std::move(iss)));
 		}
 
 		/**
@@ -3299,6 +3360,17 @@ namespace jwt {
 		verifier& with_subject(const typename json_traits::string_type& sub) {
 			return with_claim("sub", basic_claim_t(sub));
 		}
+
+		/**
+		 * Set a subject to check for.
+		 * Check is casesensitive.
+		 * \param sub Subject to check for.
+		 * \return *this to allow chaining
+		 */
+		verifier& with_subject(typename json_traits::string_type&& sub) {
+			return with_claim("sub", basic_claim_t(std::move(sub)));
+		}
+
 		/**
 		 * Set an audience to check for.
 		 * If any of the specified audiences is not present in the token the check fails.
@@ -3309,6 +3381,18 @@ namespace jwt {
 			claims["aud"] = verify_ops::is_subset_claim<json_traits>{aud};
 			return *this;
 		}
+
+		/**
+		 * Set an audience to check for.
+		 * If any of the specified audiences is not present in the token the check fails.
+		 * \param aud Audience to check for.
+		 * \return *this to allow chaining
+		 */
+		verifier& with_audience(typename basic_claim_t::set_t&& aud) {
+			claims["aud"] = verify_ops::is_subset_claim<json_traits>{std::move(aud)};
+			return *this;
+		}
+
 		/**
 		 * Set an audience to check for.
 		 * If the specified audiences is not present in the token the check fails.
@@ -3320,6 +3404,19 @@ namespace jwt {
 			s.insert(aud);
 			return with_audience(s);
 		}
+
+		/**
+		 * Set an audience to check for.
+		 * If the specified audiences is not present in the token the check fails.
+		 * \param aud Audience to check for.
+		 * \return *this to allow chaining
+		 */
+		verifier& with_audience(typename json_traits::string_type&& aud) {
+			typename basic_claim_t::set_t s;
+			s.insert(std::move(aud));
+			return with_audience(std::move(s));
+		}
+
 		/**
 		 * Set an id to check for.
 		 * Check is casesensitive.
@@ -3329,13 +3426,34 @@ namespace jwt {
 		verifier& with_id(const typename json_traits::string_type& id) { return with_claim("jti", basic_claim_t(id)); }
 
 		/**
+		 * Set an id to check for.
+		 * Check is casesensitive.
+		 * \param id ID to check for.
+		 * \return *this to allow chaining
+		 */
+		verifier& with_id(typename json_traits::string_type&& id) {
+			return with_claim("jti", basic_claim_t(std::move(id)));
+		}
+
+		/**
 		 * Specify a claim to check for using the specified operation.
 		 * \param name Name of the claim to check for
 		 * \param fn Function to use for verifying the claim
 		 * \return *this to allow chaining
 		 */
 		verifier& with_claim(const typename json_traits::string_type& name, verify_check_fn_t fn) {
-			claims[name] = fn;
+			claims[name] = std::move(fn);
+			return *this;
+		}
+
+		/**
+		 * Specify a claim to check for using the specified operation.
+		 * \param name Name of the claim to check for
+		 * \param fn Function to use for verifying the claim
+		 * \return *this to allow chaining
+		 */
+		verifier& with_claim(typename json_traits::string_type&& name, verify_check_fn_t fn) {
+			claims[std::move(name)] = std::move(fn);
 			return *this;
 		}
 
@@ -3345,8 +3463,18 @@ namespace jwt {
 		 * \param c Claim to check for
 		 * \return *this to allow chaining
 		 */
-		verifier& with_claim(const typename json_traits::string_type& name, basic_claim_t c) {
+		verifier& with_claim(const typename json_traits::string_type& name, const basic_claim_t& c) {
 			return with_claim(name, verify_ops::equals_claim<json_traits>{c});
+		}
+
+		/**
+		 * Specify a claim to check for equality (both type & value).
+		 * \param name Name of the claim to check for
+		 * \param c Claim to check for
+		 * \return *this to allow chaining
+		 */
+		verifier& with_claim(typename json_traits::string_type&& name, const basic_claim_t& c) {
+			return with_claim(std::move(name), verify_ops::equals_claim<json_traits>{c});
 		}
 
 		/**
@@ -3377,8 +3505,10 @@ namespace jwt {
 		 */
 		void verify(const decoded_jwt<json_traits>& jwt, std::error_code& ec) const {
 			ec.clear();
-			const typename json_traits::string_type data = jwt.get_header_base64() + "." + jwt.get_payload_base64();
-			const typename json_traits::string_type sig = jwt.get_signature();
+			typename json_traits::string_type data(jwt.get_header_base64());
+			data.push_back('.');
+			data.append(jwt.get_payload_base64());
+			const typename json_traits::string_type sig(jwt.get_signature());
 			const std::string algo = jwt.get_algorithm();
 			if (algs.count(algo) == 0) {
 				ec = error::token_verification_error::wrong_algorithm;
@@ -3579,18 +3709,14 @@ namespace jwt {
 		 * Check if a jwks claim is present
 		 * \return true if claim was present, false otherwise
 		 */
-		bool has_jwk_claim(const typename json_traits::string_type& name) const noexcept {
-			return jwk_claims.has_claim(name);
-		}
+		bool has_jwk_claim(string_view name) const noexcept { return jwk_claims.has_claim(name); }
 
 		/**
 		 * Get jwks claim
 		 * \return Requested claim
 		 * \throw std::runtime_error If claim was not present
 		 */
-		basic_claim_t get_jwk_claim(const typename json_traits::string_type& name) const {
-			return jwk_claims.get_claim(name);
-		}
+		basic_claim_t get_jwk_claim(string_view name) const { return jwk_claims.get_claim(name); }
 
 		bool empty() const noexcept { return jwk_claims.empty(); }
 
@@ -3713,7 +3839,7 @@ namespace jwt {
 	 * \throw std::runtime_error Base64 decoding failed or invalid json
 	 */
 	template<typename json_traits, typename Decode>
-	decoded_jwt<json_traits> decode(const typename json_traits::string_type& token, Decode decode) {
+	decoded_jwt<json_traits> decode(string_view token, Decode decode) {
 		return decoded_jwt<json_traits>(token, decode);
 	}
 
@@ -3725,17 +3851,17 @@ namespace jwt {
 	 * \throw std::runtime_error Base64 decoding failed or invalid json
 	 */
 	template<typename json_traits>
-	decoded_jwt<json_traits> decode(const typename json_traits::string_type& token) {
+	decoded_jwt<json_traits> decode(string_view token) {
 		return decoded_jwt<json_traits>(token);
 	}
 
 	template<typename json_traits>
-	jwk<json_traits> parse_jwk(const typename json_traits::string_type& token) {
+	jwk<json_traits> parse_jwk(string_view token) {
 		return jwk<json_traits>(token);
 	}
 
 	template<typename json_traits>
-	jwks<json_traits> parse_jwks(const typename json_traits::string_type& token) {
+	jwks<json_traits> parse_jwks(string_view token) {
 		return jwks<json_traits>(token);
 	}
 } // namespace jwt
